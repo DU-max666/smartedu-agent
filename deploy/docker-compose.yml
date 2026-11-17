@@ -1,0 +1,82 @@
+version: "3.8"
+
+# 慧学平台本地编排：api + Milvus 全家桶 + Redis + PostgreSQL
+# 说明：api 默认以 mock 模式启动（无 OPENAI_API_KEY），接入真实模型只需在 .env 补密钥
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: prod
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CHAT_MODEL: ${CHAT_MODEL:-gpt-4o-mini}
+      MILVUS_URI: http://milvus:19530
+      USE_MILVUS: "1"
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg2://huixue:huixue@postgres:5432/huixue
+      CORPUS_VERSION: v2026.03
+    depends_on:
+      - milvus
+      - redis
+      - postgres
+    restart: unless-stopped
+
+  # ---- Milvus standalone 依赖链 ----
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.11
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    volumes:
+      - etcd-data:/etcd
+
+  minio:
+    image: minio/minio:RELEASE.2024-03-21T23-13-43Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    command: minio server /minio_data
+    volumes:
+      - minio-data:/minio_data
+
+  milvus:
+    image: milvusdb/milvus:v2.4.4
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    ports:
+      - "19530:19530"
+    depends_on:
+      - etcd
+      - minio
+    volumes:
+      - milvus-data:/var/lib/milvus
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: huixue
+      POSTGRES_PASSWORD: huixue
+      POSTGRES_DB: huixue
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+
+volumes:
+  etcd-data:
+  minio-data:
+  milvus-data:
+  pg-data:
